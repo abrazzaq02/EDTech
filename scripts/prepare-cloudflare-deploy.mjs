@@ -24,9 +24,11 @@ if (route) {
 } else if (config.route || config.routes?.length) {
   config.workers_dev = false;
 } else {
-  throw new Error(
-    'No deployment route is configured. Either register a workers.dev subdomain in Cloudflare for this account or set the GitHub Actions secret CLOUDFLARE_ROUTE to a custom route such as "example.com/*".'
-  );
+  // No explicit route configured. Fall back to workers_dev to allow deployments against a
+  // registered workers.dev subdomain (or local testing) rather than failing the job here.
+  // To deploy to a custom domain route, set the GitHub Actions secret CLOUDFLARE_ROUTE (e.g. "example.com/*").
+  console.warn('No deployment route is configured. Defaulting to workers_dev = true. To use a custom route, set the CLOUDFLARE_ROUTE secret.');
+  config.workers_dev = true;
 }
 
 config.vars = {
