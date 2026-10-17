@@ -14,6 +14,7 @@ binding.database_name = 'edtech';
 binding.database_id = databaseId;
 binding.migrations_dir = resolve('drizzle');
 config.name = 'edtech';
+config.workers_dev = true;
 config.vars = {
   ...(config.vars || {}),
   OPENAI_MODEL: process.env.OPENAI_MODEL || 'gpt-4.1-mini',
