@@ -1,0 +1,85 @@
+name: Test and deploy EDTech
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: edtech-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.25.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Type check
+        run: pnpm typecheck
+      - name: Lint
+        run: pnpm lint
+      - name: Run tests
+        run: pnpm test
+      - name: Build
+        run: pnpm build
+      - name: Prepare production config
+        run: node scripts/prepare-cloudflare-deploy.mjs
+        env:
+          CLOUDFLARE_D1_DATABASE_ID: ${{ secrets.CLOUDFLARE_D1_DATABASE_ID }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+      - name: Check required deployment credentials
+        run: |
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID DEMO_SIGNING_SECRET; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Add the required GitHub Actions secret $name before deploying."
+              exit 1
+            fi
+          done
+          if [ "${#DEMO_SIGNING_SECRET}" -lt 32 ]; then
+            echo "::error::DEMO_SIGNING_SECRET must contain at least 32 characters."
+            exit 1
+          fi
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          DEMO_SIGNING_SECRET: ${{ secrets.DEMO_SIGNING_SECRET }}
+      - name: Apply database migrations
+        run: pnpm exec wrangler d1 migrations apply edtech --remote --config dist/server/wrangler.json
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Deploy Worker
+        run: pnpm exec wrangler deploy --config dist/server/wrangler.json
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Set demo and guest-session secret
+        run: printf '%s' "$APP_SECRET" | pnpm exec wrangler secret put DEMO_SIGNING_SECRET --config dist/server/wrangler.json
+        env:
+          APP_SECRET: ${{ secrets.DEMO_SIGNING_SECRET }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Set OpenAI key when configured
+        run: |
+          if [ -n "$AI_KEY" ]; then
+            printf '%s' "$AI_KEY" | pnpm exec wrangler secret put OPENAI_API_KEY --config dist/server/wrangler.json
+          else
+            echo "OPENAI_API_KEY is not set; source-based learning stays available and generative AI remains off."
+          fi
+        env:
+          AI_KEY: ${{ secrets.OPENAI_API_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
